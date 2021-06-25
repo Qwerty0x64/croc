@@ -34,7 +34,7 @@ func Run() (err error) {
 	app := cli.NewApp()
 	app.Name = "croc"
 	if Version == "" {
-		Version = "v9.1.0-35106d4"
+		Version = "v9.2.0-d442755"
 	}
 	app.Version = Version
 	app.Compiled = time.Now()
@@ -55,6 +55,7 @@ func Run() (err error) {
 			ArgsUsage:   "[filename]",
 			Flags: []cli.Flag{
 				&cli.StringFlag{Name: "code", Aliases: []string{"c"}, Usage: "codephrase used to connect to relay"},
+				&cli.StringFlag{Name: "hash", Value: "xxhash", Usage: "hash algorithm (xxhash, imohash, md5)"},
 				&cli.StringFlag{Name: "text", Aliases: []string{"t"}, Usage: "send some text"},
 				&cli.BoolFlag{Name: "no-local", Usage: "disable local relay when sending"},
 				&cli.BoolFlag{Name: "no-multi", Usage: "disable multiplexing"},
@@ -116,8 +117,9 @@ func Run() (err error) {
 				_, basename := filepath.Split(fpath)
 				fnames = append(fnames, "'"+basename+"'")
 			}
-			yn := utils.GetInput(fmt.Sprintf("Did you mean to send %s? (y/n) ", strings.Join(fnames, ", ")))
-			if strings.ToLower(yn) == "y" {
+			promptMessage := fmt.Sprintf("Did you mean to send %s? (Y/n) ", strings.Join(fnames, ", "))
+			choice := strings.ToLower(utils.GetInput(promptMessage))
+			if choice == "" || choice == "y" || choice == "yes" {
 				return send(c)
 			}
 		}
@@ -198,7 +200,7 @@ func send(c *cli.Context) (err error) {
 		NoCompress:     c.Bool("no-compress"),
 		Overwrite:      c.Bool("overwrite"),
 		Curve:          c.String("curve"),
-		HashAlgorithm:  "xxhash",
+		HashAlgorithm:  c.String("hash"),
 	}
 	if crocOptions.RelayAddress != models.DEFAULT_RELAY {
 		crocOptions.RelayAddress6 = ""
@@ -228,6 +230,18 @@ func send(c *cli.Context) (err error) {
 		}
 		if !c.IsSet("pass") {
 			crocOptions.RelayPassword = rememberedOptions.RelayPassword
+		}
+		if !c.IsSet("relay6") {
+			crocOptions.RelayAddress6 = rememberedOptions.RelayAddress6
+		}
+		if !c.IsSet("overwrite") {
+			crocOptions.Overwrite = rememberedOptions.Overwrite
+		}
+		if !c.IsSet("curve") {
+			crocOptions.Curve = rememberedOptions.Curve
+		}
+		if !c.IsSet("local") {
+			crocOptions.OnlyLocal = rememberedOptions.OnlyLocal
 		}
 	}
 
@@ -323,7 +337,6 @@ func makeTempFileWithString(s string) (fnames []string, err error) {
 	}
 	fnames = []string{f.Name()}
 	return
-
 }
 
 func getPaths(fnames []string) (paths []string, haveFolder bool, err error) {
@@ -396,7 +409,6 @@ func receive(c *cli.Context) (err error) {
 		IP:            c.String("ip"),
 		Overwrite:     c.Bool("overwrite"),
 		Curve:         c.String("curve"),
-		HashAlgorithm: "xxhash",
 	}
 	if crocOptions.RelayAddress != models.DEFAULT_RELAY {
 		crocOptions.RelayAddress6 = ""
@@ -442,6 +454,18 @@ func receive(c *cli.Context) (err error) {
 		}
 		if !c.IsSet("pass") {
 			crocOptions.RelayPassword = rememberedOptions.RelayPassword
+		}
+		if !c.IsSet("relay6") {
+			crocOptions.RelayAddress6 = rememberedOptions.RelayAddress6
+		}
+		if !c.IsSet("overwrite") {
+			crocOptions.Overwrite = rememberedOptions.Overwrite
+		}
+		if !c.IsSet("curve") {
+			crocOptions.Curve = rememberedOptions.Curve
+		}
+		if !c.IsSet("local") {
+			crocOptions.OnlyLocal = rememberedOptions.OnlyLocal
 		}
 	}
 

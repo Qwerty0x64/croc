@@ -255,6 +255,8 @@ func (c *Client) sendCollectFiles(options TransferOptions) (err error) {
 			}
 		}
 		log.Debugf("file %d info: %+v", i, c.FilesToTransfer[i])
+		fmt.Fprintf(os.Stderr, "\r                                 ")
+		fmt.Fprintf(os.Stderr, "\rSending %d files (%s)", i, utils.ByteCountDecimal(totalFilesSize))
 	}
 	log.Debugf("longestFilename: %+v", c.longestFilename)
 	fname := fmt.Sprintf("%d files", len(c.FilesToTransfer))
@@ -268,7 +270,8 @@ func (c *Client) sendCollectFiles(options TransferOptions) (err error) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Sending %s (%s)\n", fname, utils.ByteCountDecimal(totalFilesSize))
+	fmt.Fprintf(os.Stderr, "\r                                 ")
+	fmt.Fprintf(os.Stderr, "\rSending %s (%s)\n", fname, utils.ByteCountDecimal(totalFilesSize))
 	return
 }
 
@@ -583,7 +586,7 @@ func (c *Client) Receive() (err error) {
 		log.Debug("establishing connection")
 	}
 	var banner string
-	durations := []time.Duration{100 * time.Millisecond, 5 * time.Second}
+	durations := []time.Duration{200 * time.Millisecond, 5 * time.Second}
 	err = fmt.Errorf("found no addresses to connect")
 	for i, address := range []string{c.Options.RelayAddress6, c.Options.RelayAddress} {
 		if address == "" {
@@ -652,7 +655,7 @@ func (c *Client) Receive() (err error) {
 				}
 
 				serverTry := fmt.Sprintf("%s:%s", ip, port)
-				conn, banner2, externalIP, errConn := tcp.ConnectToTCPServer(serverTry, c.Options.RelayPassword, c.Options.SharedSecret[:3], 50*time.Millisecond)
+				conn, banner2, externalIP, errConn := tcp.ConnectToTCPServer(serverTry, c.Options.RelayPassword, c.Options.SharedSecret[:3], 250*time.Millisecond)
 				if errConn != nil {
 					log.Debugf("could not connect to " + serverTry)
 					continue
@@ -776,7 +779,7 @@ func (c *Client) processMessageFileInfo(m message.Message) (done bool, err error
 	c.Options.NoCompress = senderInfo.NoCompress
 	c.Options.HashAlgorithm = senderInfo.HashAlgorithm
 	if c.Options.HashAlgorithm == "" {
-		c.Options.HashAlgorithm = "imohash"
+		c.Options.HashAlgorithm = "xxhash"
 	}
 	log.Debugf("using hash algorithm: %s", c.Options.HashAlgorithm)
 	if c.Options.NoCompress {
@@ -804,20 +807,20 @@ func (c *Client) processMessageFileInfo(m message.Message) (done bool, err error
 		}
 	}
 	// c.spinner.Stop()
-	if strings.HasPrefix(fname, "'croc-stdin") {
-		fname = "'stdin'"
-		if c.Options.SendingText {
-			fname = "'text'"
-		}
+	action := "Accept"
+	if c.Options.SendingText {
+		action = "Display"
+		fname = "text message"
 	}
 	if !c.Options.NoPrompt || c.Options.Ask || senderInfo.Ask {
 		if c.Options.Ask || senderInfo.Ask {
 			machID, _ := machineid.ID()
-			fmt.Fprintf(os.Stderr, "\rYour machine id is '%s'.\nAccept %s (%s) from '%s'? (y/n) ", machID, fname, utils.ByteCountDecimal(totalSize), senderInfo.MachineID)
+			fmt.Fprintf(os.Stderr, "\rYour machine id is '%s'.\n%s %s (%s) from '%s'? (Y/n) ", machID, action, fname, utils.ByteCountDecimal(totalSize), senderInfo.MachineID)
 		} else {
-			fmt.Fprintf(os.Stderr, "\rAccept %s (%s)? (y/n) ", fname, utils.ByteCountDecimal(totalSize))
+			fmt.Fprintf(os.Stderr, "\r%s %s (%s)? (Y/n) ", action, fname, utils.ByteCountDecimal(totalSize))
 		}
-		if strings.ToLower(strings.TrimSpace(utils.GetInput(""))) != "y" {
+		choice := strings.ToLower(utils.GetInput(""))
+		if choice != "" && choice != "y" && choice != "yes" {
 			err = message.Send(c.conn[0], c.Key, message.Message{
 				Type:    "error",
 				Message: "refusing files",
@@ -1012,8 +1015,9 @@ func (c *Client) processMessage(payload []byte) (done bool, err error) {
 		c.Step3RecipientRequestFile = true
 
 		if c.Options.Ask {
-			fmt.Fprintf(os.Stderr, "Send to machine '%s'? (y/n) ", remoteFile.MachineID)
-			if strings.ToLower(strings.TrimSpace(utils.GetInput(""))) != "y" {
+			fmt.Fprintf(os.Stderr, "Send to machine '%s'? (Y/n) ", remoteFile.MachineID)
+			choice := strings.ToLower(utils.GetInput(""))
+			if choice != "" && choice != "y" && choice != "yes" {
 				err = message.Send(c.conn[0], c.Key, message.Message{
 					Type:    "error",
 					Message: "refusing files",
@@ -1267,10 +1271,22 @@ func (c *Client) updateIfRecipientHasFileInfo() (err error) {
 		if !bytes.Equal(fileHash, fileInfo.Hash) {
 			log.Debugf("hashed %s to %x using %s", fileInfo.Name, fileHash, c.Options.HashAlgorithm)
 			log.Debugf("hashes are not equal %x != %x", fileHash, fileInfo.Hash)
-			if errHash == nil && !c.Options.Overwrite && errRecipientFile == nil {
+			if errHash == nil && !c.Options.Overwrite && errRecipientFile == nil && !strings.HasPrefix(fileInfo.Name, "croc-stdin-") {
+
+				missingChunks := utils.ChunkRangesToChunks(utils.MissingChunks(
+					path.Join(fileInfo.FolderRemote, fileInfo.Name),
+					fileInfo.Size,
+					models.TCP_BUFFER_SIZE/2,
+				))
+				percentDone := 100 - float64(len(missingChunks)*models.TCP_BUFFER_SIZE/2)/float64(fileInfo.Size)*100
+
 				log.Debug("asking to overwrite")
-				ans := utils.GetInput(fmt.Sprintf("\nOverwrite '%s'? (y/n) ", path.Join(fileInfo.FolderRemote, fileInfo.Name)))
-				if strings.TrimSpace(strings.ToLower(ans)) != "y" {
+				prompt := fmt.Sprintf("\nOverwrite '%s'? (y/N) ", path.Join(fileInfo.FolderRemote, fileInfo.Name))
+				if percentDone < 99 {
+					prompt = fmt.Sprintf("\nResume '%s' (%2.1f%%)? (y/N) ", path.Join(fileInfo.FolderRemote, fileInfo.Name), percentDone)
+				}
+				choice := strings.ToLower(utils.GetInput(prompt))
+				if choice != "y" && choice != "yes" {
 					fmt.Fprintf(os.Stderr, "skipping '%s'", path.Join(fileInfo.FolderRemote, fileInfo.Name))
 					continue
 				}
@@ -1517,7 +1533,6 @@ func (c *Client) sendData(i int) {
 						c.Key,
 					)
 				} else {
-
 					dataToSend, err = crypt.Encrypt(
 						compress.Compress(
 							append(posByte, data[:n]...),
